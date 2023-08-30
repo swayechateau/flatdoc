@@ -1,3 +1,10 @@
+## v1.0.0 - September 1, 2023
+
+ * Removed jquery dependancy
+ * Added more themes
+ * Removed make for packagae.json scripts
+ * Refactored CSS
+
 ## v0.9.0 - November 9, 2014
 
  * Changed prescribed URLs to use [https://cdn.rawgit.com](http://rawgit.com), supporting HTTPS. (#27)
