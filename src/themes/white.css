@@ -1,4 +1,7 @@
-@import url('../style.css');
+/**
+* Theme: White Colour Scheme
+*/
+
 :root {
   color-scheme: light dark;
   color: #000;
