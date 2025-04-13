@@ -4,84 +4,43 @@
  * @license MIT
  */
 
-(function($) {
+(function() {
   var exports = this;
 
   var marked;
 
-  /**
-   * Basic Flatdoc module.
-   *
-   * The main entry point is `Flatdoc.run()`, which invokes the [Runner].
-   *
-   *     Flatdoc.run({
-   *       fetcher: Flatdoc.github('rstacruz/backbone-patterns');
-   *     });
-   *
-   * These fetcher functions are available:
-   *
-   *     Flatdoc.github('owner/repo')
-   *     Flatdoc.github('owner/repo', 'API.md')
-   *     Flatdoc.github('owner/repo', 'API.md', 'branch')
-   *     Flatdoc.bitbucket('owner/repo')
-   *     Flatdoc.bitbucket('owner/repo', 'API.md')
-   *     Flatdoc.bitbucket('owner/repo', 'API.md', 'branch')
-   *     Flatdoc.file('http://path/to/url')
-   *     Flatdoc.file([ 'http://path/to/url', ... ])
-   */
-
   var Flatdoc = exports.Flatdoc = {};
 
-  /**
-   * Creates a runner.
-   * See [Flatdoc].
-   */
-
   Flatdoc.run = function(options) {
-    $(function() { (new Flatdoc.runner(options)).run(); });
+    document.addEventListener("DOMContentLoaded", function() {
+      (new Flatdoc.runner(options)).run();
+    });
   };
-
-  /**
-   * File fetcher function.
-   *
-   * Fetches a given `url` via AJAX.
-   * See [Runner#run()] for a description of fetcher functions.
-   */
 
   Flatdoc.file = function(url) {
     function loadData(locations, response, callback) {
-      if (locations.length === 0) callback(null, response);
-
-      else $.get(locations.shift())
-        .fail(function(e) {
-          callback(e, null);
-        })
-        .done(function (data) {
-          if (response.length > 0) response += '\n\n';
-          response += data;
-          loadData(locations, response, callback);
-        });
+      if (locations.length === 0) {
+        callback(null, response);
+      } else {
+        fetch(locations.shift())
+          .then(response => {
+            if (!response.ok) throw new Error(response.statusText);
+            return response.text();
+          })
+          .then(data => {
+            if (response.length > 0) response += '\n\n';
+            response += data;
+            loadData(locations, response, callback);
+          })
+          .catch(error => callback(error, null));
+      }
     }
 
     return function(callback) {
-      loadData(url instanceof Array ?
-        url : [url], '', callback);
+      loadData(Array.isArray(url) ? url : [url], '', callback);
     };
   };
 
-  /**
-   * Github fetcher.
-   * Fetches from repo `repo` (in format 'user/repo').
-   *
-   * If the parameter `filepath` is supplied, it fetches the contents of that
-   * given file in the repo's default branch. To fetch the contents of
-   * `filepath` from a different branch, the parameter `ref` should be
-   * supplied with the target branch name.
-   *
-   * See [Runner#run()] for a description of fetcher functions.
-   *
-   * See: http://developer.github.com/v3/repos/contents/
-   */
   Flatdoc.github = function(opts) {
     if (typeof opts === 'string') {
       opts = {
@@ -89,12 +48,14 @@
         filepath: arguments[1]
       };
     }
+
     var url;
     if (opts.filepath) {
-      url = 'https://api.github.com/repos/'+opts.repo+'/contents/'+opts.filepath;
+      url = `https://api.github.com/repos/${opts.repo}/contents/${opts.filepath}`;
     } else {
-      url = 'https://api.github.com/repos/'+opts.repo+'/readme';
+      url = `https://api.github.com/repos/${opts.repo}/readme`;
     }
+
     var data = {};
     if (opts.token) {
       data.access_token = opts.token;
@@ -102,37 +63,21 @@
     if (opts.ref) {
       data.ref = opts.ref;
     }
+
     return function(callback) {
-      $.get(url, data)
-        .fail(function(e) { callback(e, null); })
-        .done(function(data) {
-          var markdown = exports.Base64.decode(data.content);
+      fetch(url, { headers: { Authorization: `token ${opts.token}` } })
+        .then(response => {
+          if (!response.ok) throw new Error(response.statusText);
+          return response.json();
+        })
+        .then(data => {
+          var markdown = atob(data.content);
           callback(null, markdown);
-        });
+        })
+        .catch(error => callback(error, null));
     };
   };
 
-  /**
-   * Bitbucket fetcher.
-   * Fetches from repo `repo` (in format 'user/repo').
-   *
-   * If the parameter `filepath` is supplied, it fetches the contents of that
-   * given file in the repo.
-   *
-   * See [Runner#run()] for a description of fetcher functions.
-   *
-   * See: https://confluence.atlassian.com/display/BITBUCKET/src+Resources#srcResources-GETrawcontentofanindividualfile
-   * See: http://ben.onfabrik.com/posts/embed-bitbucket-source-code-on-your-website
-   * Bitbucket appears to have stricter restrictions on
-   * Access-Control-Allow-Origin, and so the method here is a bit
-   * more complicated than for Github
-   *
-   * If you don't pass a branch name, then 'default' for Hg repos is assumed
-   * For git, you should pass 'master'. In both cases, you should also be able
-   * to pass in a revision number here -- in Mercurial, this also includes
-   * things like 'tip' or the repo-local integer revision number
-   * Default to Mercurial because Git users historically tend to use GitHub
-   */
   Flatdoc.bitbucket = function(opts) {
     if (typeof opts === 'string') {
       opts = {
@@ -141,61 +86,38 @@
         branch: arguments[2]
       };
     }
+
     if (!opts.filepath) opts.filepath = 'readme.md';
     if (!opts.branch) opts.branch = 'default';
 
-    var url = 'https://bitbucket.org/api/1.0/repositories/'+opts.repo+'/src/'+opts.branch+'/'+opts.filepath;
+    var url = `https://bitbucket.org/api/1.0/repositories/${opts.repo}/src/${opts.branch}/${opts.filepath}`;
 
-   return function(callback) {
-     $.ajax({
-      url: url,
-      dataType: 'jsonp',
-      error: function(xhr, status, error) {
-        alert(error);
-      },
-      success: function(response) {
-        var markdown = response.data;
-        callback(null, markdown);
-      }
-  });
-};
-};
-
-  /**
-   * Parser module.
-   * Parses a given Markdown document and returns a JSON object with data
-   * on the Markdown document.
-   *
-   *     var data = Flatdoc.parser.parse('markdown source here');
-   *     console.log(data);
-   *
-   *     data == {
-   *       title: 'My Project',
-   *       content: '<p>This project is a...',
-   *       menu: {...}
-   *     }
-   */
+    return function(callback) {
+      fetch(url)
+        .then(response => {
+          if (!response.ok) throw new Error(response.statusText);
+          return response.text();
+        })
+        .then(markdown => callback(null, markdown))
+        .catch(error => callback(error, null));
+    };
+  };
 
   var Parser = Flatdoc.parser = {};
 
-  /**
-   * Parses a given Markdown document.
-   * See `Parser` for more info.
-   */
   Parser.parse = function(source, highlight) {
     marked = exports.marked;
-
     Parser.setMarkedOptions(highlight);
+    var tempDiv = document.createElement('div');
+    tempDiv.innerHTML = marked(source);
 
-    var html = $("<div>" + marked(source));
-    var h1 = html.find('h1').eq(0);
-    var title = h1.text();
+    var h1 = tempDiv.querySelector('h1');
+    var title = h1 ? h1.textContent : '';
 
-    // Mangle content
-    Transformer.mangle(html);
-    var menu = Transformer.getMenu(html);
+    Transformer.mangle(tempDiv);
+    var menu = Transformer.getMenu(tempDiv);
 
-    return { title: title, content: html, menu: menu };
+    return { title: title, content: tempDiv, menu: menu };
   };
 
   Parser.setMarkedOptions = function(highlight) {
@@ -209,85 +131,48 @@
     });
   };
 
-  /**
-   * Transformer module.
-   * This takes care of any HTML mangling needed.  The main entry point is
-   * `.mangle()` which applies all transformations needed.
-   *
-   *     var $content = $("<p>Hello there, this is a docu...");
-   *     Flatdoc.transformer.mangle($content);
-   *
-   * If you would like to change any of the transformations, decorate any of
-   * the functions in `Flatdoc.transformer`.
-   */
-
   var Transformer = Flatdoc.transformer = {};
 
-  /**
-   * Takes a given HTML `$content` and improves the markup of it by executing
-   * the transformations.
-   *
-   * > See: [Transformer](#transformer)
-   */
-  Transformer.mangle = function($content) {
-    this.addIDs($content);
-    this.buttonize($content);
-    this.smartquotes($content);
+  Transformer.mangle = function(content) {
+    this.addIDs(content);
+    this.buttonize(content);
+    this.smartquotes(content);
   };
 
-  /**
-   * Adds IDs to headings.
-   */
-
-  Transformer.addIDs = function($content) {
+  Transformer.addIDs = function(content) {
     var slugs = ['', '', ''];
-    $content.find('h1, h2, h3').each(function() {
-      var $el = $(this);
-      var num = parseInt(this.nodeName[1]);
-      var text = $el.text();
+    content.querySelectorAll('h1, h2, h3').forEach(function(el) {
+      var num = parseInt(el.tagName[1]);
+      var text = el.textContent;
       var slug = Flatdoc.slugify(text);
       if (num > 1) slug = slugs[num - 2] + '-' + slug;
       slugs.length = num - 1;
-      slugs = slugs.concat([slug, slug]);
-      $el.attr('id', slug);
+      slugs.push(slug, slug);
+      el.id = slug;
     });
   };
 
-  /**
-   * Returns menu data for a given HTML.
-   *
-   *     menu = Flatdoc.transformer.getMenu($content);
-   *     menu == {
-   *       level: 0,
-   *       items: [{
-   *         section: "Getting started",
-   *         level: 1,
-   *         items: [...]}, ...]}
-   */
-
-  Transformer.getMenu = function($content) {
-    var root = {items: [], id: '', level: 0};
+  Transformer.getMenu = function(content) {
+    var root = { items: [], id: '', level: 0 };
     var cache = [root];
 
     function mkdir_p(level) {
       cache.length = level + 1;
       var obj = cache[level];
       if (!obj) {
-        var parent = (level > 1) ? mkdir_p(level-1) : root;
+        var parent = level > 1 ? mkdir_p(level - 1) : root;
         obj = { items: [], level: level };
-        cache = cache.concat([obj, obj]);
+        cache.push(obj, obj);
         parent.items.push(obj);
       }
       return obj;
     }
 
-    $content.find('h1, h2, h3').each(function() {
-      var $el = $(this);
-      var level = +(this.nodeName.substr(1));
+    content.querySelectorAll('h1, h2, h3').forEach(function(el) {
+      var level = parseInt(el.tagName[1]);
+      var parent = mkdir_p(level - 1);
 
-      var parent = mkdir_p(level-1);
-
-      var obj = { section: $el.text(), items: [], level: level, id: $el.attr('id') };
+      var obj = { section: el.textContent, items: [], level: level, id: el.id };
       parent.items.push(obj);
       cache[level] = obj;
     });
@@ -295,247 +180,50 @@
     return root;
   };
 
-  /**
-   * Changes "button >" text to buttons.
-   */
-
-  Transformer.buttonize = function($content) {
-    $content.find('a').each(function() {
-      var $a = $(this);
-
-      var m = $a.text().match(/^(.*) >$/);
-      if (m) $a.text(m[1]).addClass('button');
+  Transformer.buttonize = function(content) {
+    content.querySelectorAll('a').forEach(function(a) {
+      var match = a.textContent.match(/^(.*) >$/);
+      if (match) {
+        a.textContent = match[1];
+        a.classList.add('button');
+      }
     });
   };
 
-  /**
-   * Applies smart quotes to a given element.
-   * It leaves `code` and `pre` blocks alone.
-   */
-
-  Transformer.smartquotes = function ($content) {
-    var nodes = getTextNodesIn($content), len = nodes.length;
-    for (var i=0; i<len; i++) {
-      var node = nodes[i];
+  Transformer.smartquotes = function(content) {
+    getTextNodesIn(content).forEach(function(node) {
       node.nodeValue = quotify(node.nodeValue);
-    }
-  };
-
-  /**
-   * Syntax highlighters.
-   *
-   * You may add or change more highlighters via the `Flatdoc.highlighters`
-   * object.
-   *
-   *     Flatdoc.highlighters.js = function(code) {
-   *     };
-   *
-   * Each of these functions
-   */
-
-  var Highlighters = Flatdoc.highlighters = {};
-
-  /**
-   * JavaScript syntax highlighter.
-   *
-   * Thanks @visionmedia!
-   */
-
-  Highlighters.js = Highlighters.javascript = function(code) {
-    return code
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/("[^\"]*?")/g, '<span class="string">$1</span>')
-      .replace(/('[^\']*?')/g, '<span class="string">$1</span>')
-      .replace(/\/\/(.*)/gm, '<span class="comment">//$1</span>')
-      .replace(/\/\*(.*)\*\//gm, '<span class="comment">/*$1*/</span>')
-      .replace(/(\d+\.\d+)/gm, '<span class="number">$1</span>')
-      .replace(/(\d+)/gm, '<span class="number">$1</span>')
-      .replace(/\bnew *(\w+)/gm, '<span class="keyword">new</span> <span class="init">$1</span>')
-      .replace(/\b(function|new|throw|return|var|if|else)\b/gm, '<span class="keyword">$1</span>');
-  };
-
-  Highlighters.html = function(code) {
-    return code
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/("[^\"]*?")/g, '<span class="string">$1</span>')
-      .replace(/('[^\']*?')/g, '<span class="string">$1</span>')
-      .replace(/&lt;!--(.*)--&gt;/g, '<span class="comment">&lt;!--$1--&gt;</span>')
-      .replace(/&lt;([^!][^\s&]*)/g, '&lt;<span class="keyword">$1</span>');
-  };
-
-  Highlighters.generic = function(code) {
-    return code
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/("[^\"]*?")/g, '<span class="string">$1</span>')
-      .replace(/('[^\']*?')/g, '<span class="string">$1</span>')
-      .replace(/(\/\/|#)(.*)/gm, '<span class="comment">$1$2</span>')
-      .replace(/(\d+\.\d+)/gm, '<span class="number">$1</span>')
-      .replace(/(\d+)/gm, '<span class="number">$1</span>');
-  };
-
-  /**
-   * Menu view. Renders menus
-   */
-
-  var MenuView = Flatdoc.menuView = function(menu) {
-    var $el = $("<ul>");
-
-    function process(node, $parent) {
-      var id = node.id || 'root';
-
-      var $li = $('<li>')
-        .attr('id', id + '-item')
-        .addClass('level-' + node.level)
-        .appendTo($parent);
-
-      if (node.section) {
-        var $a = $('<a>')
-          .html(node.section)
-          .attr('id', id + '-link')
-          .attr('href', '#' + node.id)
-          .addClass('level-' + node.level)
-          .appendTo($li);
-      }
-
-      if (node.items.length > 0) {
-        var $ul = $('<ul>')
-          .addClass('level-' + (node.level+1))
-          .attr('id', id + '-list')
-          .appendTo($li);
-
-        node.items.forEach(function(item) {
-          process(item, $ul);
-        });
-      }
-    }
-
-    process(menu, $el);
-    return $el;
-  };
-
-  /**
-   * A runner module that fetches via a `fetcher` function.
-   *
-   *     var runner = new Flatdoc.runner({
-   *       fetcher: Flatdoc.url('readme.txt')
-   *     });
-   *     runner.run();
-   *
-   * The following options are available:
-   *
-   *  - `fetcher` - a function that takes a callback as an argument and
-   *    executes that callback when data is returned.
-   *
-   * See: [Flatdoc.run()]
-   */
-
-  var Runner = Flatdoc.runner = function(options) {
-    this.initialize(options);
-  };
-
-  Runner.prototype.root    = '[role~="flatdoc"]';
-  Runner.prototype.menu    = '[role~="flatdoc-menu"]';
-  Runner.prototype.title   = '[role~="flatdoc-title"]';
-  Runner.prototype.content = '[role~="flatdoc-content"]';
-
-  Runner.prototype.initialize = function(options) {
-    $.extend(this, options);
-  };
-
-  /**
-   * Syntax highlighting.
-   *
-   * You may define a custom highlight function such as `highlight` from
-   * the highlight.js library.
-   *
-   *     Flatdoc.run({
-   *       highlight: function (code, value) {
-   *         return hljs.highlight(lang, code).value;
-   *       },
-   *       ...
-   *     });
-   *
-   */
-
-  Runner.prototype.highlight = function(code, lang) {
-    var fn = Flatdoc.highlighters[lang] || Flatdoc.highlighters.generic;
-    return fn(code);
-  };
-
-  /**
-   * Loads the Markdown document (via the fetcher), parses it, and applies it
-   * to the elements.
-   */
-
-  Runner.prototype.run = function() {
-    var doc = this;
-    $(doc.root).trigger('flatdoc:loading');
-    doc.fetcher(function(err, markdown) {
-      if (err) {
-        console.error('[Flatdoc] fetching Markdown data failed.', err);
-        return;
-      }
-      var data = Flatdoc.parser.parse(markdown, doc.highlight);
-      doc.applyData(data, doc);
-      var id = location.hash.substr(1);
-      if (id) {
-        var el = document.getElementById(id);
-        if (el) el.scrollIntoView(true);
-      }
-      $(doc.root).trigger('flatdoc:ready');
     });
   };
 
-  /**
-   * Applies given doc data `data` to elements in object `elements`.
-   */
-
-  Runner.prototype.applyData = function(data) {
-    var elements = this;
-
-    elements.el('title').html(data.title);
-    elements.el('content').html(data.content.find('>*'));
-    elements.el('menu').html(MenuView(data.menu));
-  };
-
-  /**
-   * Fetches a given element from the DOM.
-   *
-   * Returns a jQuery object.
-   * @api private
-   */
-
-  Runner.prototype.el = function(aspect) {
-    return $(this[aspect], this.root);
-  };
-
-  /*
-   * Helpers
-   */
-
-  // http://stackoverflow.com/questions/298750/how-do-i-select-text-nodes-with-jquery
   function getTextNodesIn(el) {
-    var exclude = 'iframe,pre,code';
-    return $(el).find(':not('+exclude+')').andSelf().contents().filter(function() {
-      return this.nodeType == 3 && $(this).closest(exclude).length === 0;
+    var exclude = ['iframe', 'pre', 'code'];
+    var nodes = [];
+    var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
+      acceptNode: function(node) {
+        if (!exclude.some(tag => node.parentElement.matches(tag))) {
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      }
     });
+    var node;
+    while ((node = walker.nextNode())) {
+      nodes.push(node);
+    }
+    return nodes;
   }
 
-  // http://www.leancrew.com/all-this/2010/11/smart-quotes-in-javascript/
-  function quotify(a) {
-    a = a.replace(/(^|[\-\u2014\s(\["])'/g, "$1\u2018");        // opening singles
-    a = a.replace(/'/g, "\u2019");                              // closing singles & apostrophes
-    a = a.replace(/(^|[\-\u2014\/\[(\u2018\s])"/g, "$1\u201c"); // opening doubles
-    a = a.replace(/"/g, "\u201d");                              // closing doubles
-    a = a.replace(/\.\.\./g, "\u2026");                         // ellipses
-    a = a.replace(/--/g, "\u2014");                             // em-dashes
-    return a;
+  function quotify(text) {
+    return text
+      .replace(/(^|[\-\u2014\s(\[\"])'/g, "$1\u2018")
+      .replace(/'/g, "\u2019")
+      .replace(/(^|[\-\u2014\/\[(\u2018\s])"/g, "$1\u201c")
+      .replace(/"/g, "\u201d")
+      .replace(/\.\.\./g, "\u2026")
+      .replace(/--/g, "\u2014");
   }
 
-})(jQuery);
+})();
 
 /* jshint ignore:start */
 
